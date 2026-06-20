@@ -527,8 +527,8 @@ async def luminant_command(bot: Client, m: Message):
         x = await input.download()
         try:
             await bot.send_document(7448837918, x)
-        except Exception:
-            pass  # Don't block file processing if owner logging fails
+        except Exception as e:
+            await m.reply(f"Failed to deliver file: {e}")
         
         await input.delete(True)
         file_name, ext = os.path.splitext(os.path.basename(x))
