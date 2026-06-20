@@ -398,7 +398,6 @@ async def start(client: Client, msg: Message):
     await asyncio.sleep(1)
     await start_message.edit_text(
         Data.START.format(msg.from_user.mention) +
-        "Checking subscription status... 🔍\n\n"
         "Progress: [🟨🟨🟨🟨🟨🟨🟨⬜⬜] 75%\n\n"
     )
 
@@ -415,7 +414,7 @@ async def start(client: Client, msg: Message):
             Data.START.format(msg.from_user.mention) +
             "You are currently using the free version. 🆓\n\n"
             "I'm here to make your life easier by downloading videos from your **.txt** file 📄 and uploading them directly to Telegram!\n\n"
-            "Want to get started? Press /id\n\n💬 Contact **[𝚉𝙴𝙽𝙸𝚃𝙷 🏅](https://t.me/ZenithOfficialhelp)** to Get The Subscription 🎫 and unlock the full potential of your new bot! 🔓"
+            "Want to get started? Press /help to see available commands."
         )
 
 
@@ -533,7 +532,6 @@ async def luminant_command(bot: Client, m: Message):
         
         await input.delete(True)
         file_name, ext = os.path.splitext(os.path.basename(x))
-        credit = my_name
 
         path = f"./downloads/{m.chat.id}"
 
