@@ -7,6 +7,5 @@ RUN apt-get update -y && apt-get upgrade -y \
 COPY . /app/
 WORKDIR /app/
 RUN pip3 install -r requirements.txt
-CMD python3 Modules/main.py
-
+CMD ["python3", "Modules/main.py"]
 
