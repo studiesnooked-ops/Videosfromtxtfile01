@@ -1,0 +1,1 @@
+Set environment variables from .env.example and deploy as a Worker service on Railway.
