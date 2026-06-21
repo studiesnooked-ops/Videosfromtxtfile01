@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
-# fix_main_hotpatch.py
+# repair_main_force.py
 #
-# Hotfix patcher for Pyrogram bot main.py
+# Strong repair for Modules/main.py
 #
 # Fixes:
-# 1. MESSAGE_NOT_MODIFIED crash from repeated edit_text()
-# 2. FloodWait e.x issue -> e.value
-# 3. time.sleep() inside async functions -> await asyncio.sleep()
-# 4. missing global file_queue inside load_initial_data()
-# 5. broken /start command conflict code
+# 1. Removes Git conflict markers: <<<<<<< ======= >>>>>>>
+# 2. Removes broken /start command block
+# 3. Adds clean /start command
+# 4. Adds safe_edit if missing
+# 5. Fixes FloodWait e.x -> e.value
+# 6. Fixes time.sleep() inside async functions
+# 7. Fixes await reply_text(e) -> str(e)
 #
 # Usage:
-#   Put this file in your project root, then run:
-#   python fix_main_hotpatch.py
-#
-# It patches:
-#   Modules/main.py
-#
-# Backup created:
-#   Modules/main.py.bak
+#   python repair_main_force.py
 
 from pathlib import Path
 import re
 import sys
+import datetime
 
 
 TARGET = Path("Modules/main.py")
@@ -33,33 +29,159 @@ if not TARGET.exists():
     sys.exit(1)
 
 
-text = TARGET.read_text(encoding="utf-8")
+text = TARGET.read_text(encoding="utf-8", errors="ignore")
 
-backup = TARGET.with_suffix(".py.bak")
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+backup = TARGET.with_name(f"main.py.force_backup_{timestamp}")
 backup.write_text(text, encoding="utf-8")
 print(f"✅ Backup created: {backup}")
 
 
-# ---------------------------------------------------------
-# 1. Fix Pyrogram error imports
-# ---------------------------------------------------------
+# =========================================================
+# 1. Remove Git conflict blocks safely
+# =========================================================
 
-if "MessageNotModified" not in text:
+def score_conflict_side(side: list[str]) -> int:
+    content = "\n".join(side)
+
+    score = 0
+
+    # Good bot-code signals
+    good_words = [
+        "@bot.on_message",
+        "async def",
+        "await ",
+        "filters.command",
+        "bot.run()",
+        "reply_text",
+        "send_message",
+        "InlineKeyboard",
+        "load_initial_data",
+        "process_links",
+        "process_file",
+    ]
+
+    # Bad patch-script signals
+    bad_words = [
+        "TARGET = Path",
+        "TARGET.write_text",
+        "start_pattern",
+        "subn(",
+        "Patch complete",
+        "Backup created",
+        "Could not auto-replace",
+        "fix_main_hotpatch",
+        "repair_main_force",
+        "Path(",
+        "sys.exit",
+        "print(",
+    ]
+
+    for word in good_words:
+        score += content.count(word) * 3
+
+    for word in bad_words:
+        score -= content.count(word) * 5
+
+    if "Checking subscription status" in content:
+        score += 20
+
+    return score
+
+
+def resolve_git_conflicts(src: str) -> str:
+    lines = src.splitlines()
+    out = []
+    i = 0
+    fixed = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        if line.startswith("<<<<<<<"):
+            fixed += 1
+            i += 1
+
+            left = []
+            right = []
+            current = left
+
+            while i < len(lines) and not lines[i].startswith(">>>>>>>"):
+                if lines[i].startswith("======="):
+                    current = right
+                else:
+                    current.append(lines[i])
+                i += 1
+
+            # Skip >>>>>>>
+            if i < len(lines) and lines[i].startswith(">>>>>>>"):
+                i += 1
+
+            left_score = score_conflict_side(left)
+            right_score = score_conflict_side(right)
+
+            chosen = right if right_score >= left_score else left
+            out.extend(chosen)
+            continue
+
+        # Remove loose conflict marker lines
+        if line.startswith("=======") or line.startswith(">>>>>>>"):
+            i += 1
+            continue
+
+        out.append(line)
+        i += 1
+
+    if fixed:
+        print(f"✅ Resolved {fixed} Git conflict block(s).")
+    else:
+        print("ℹ️ No full Git conflict block found.")
+
+    return "\n".join(out) + "\n"
+
+
+text = resolve_git_conflicts(text)
+
+
+# =========================================================
+# 2. Remove accidental patcher code if it entered main.py
+# =========================================================
+
+bad_markers = [
+    "text, count = start_pattern.subn",
+    "TARGET.write_text(text",
+    "print(\"✅ Patch complete",
+    "print(\"Now redeploy",
+    "print(\"✅ Now run:",
+]
+
+for marker in bad_markers:
+    pos = text.find(marker)
+    if pos != -1:
+        print(f"⚠️ Removed accidental patcher code starting from: {marker}")
+        text = text[:pos].rstrip() + "\n"
+        break
+
+
+# =========================================================
+# 3. Fix import for MessageNotModified
+# =========================================================
+
+if "from pyrogram.errors import FloodWait" in text and "MessageNotModified" not in text:
     text = text.replace(
         "from pyrogram.errors import FloodWait",
         "from pyrogram.errors import FloodWait, MessageNotModified"
     )
 
-# If import line already changed badly, clean duplicate imports
 text = text.replace(
     "from pyrogram.errors import FloodWait, MessageNotModified, MessageNotModified",
     "from pyrogram.errors import FloodWait, MessageNotModified"
 )
 
 
-# ---------------------------------------------------------
-# 2. Add safe_edit helper
-# ---------------------------------------------------------
+# =========================================================
+# 4. Add safe_edit helper if missing
+# =========================================================
 
 helper_code = r'''
 
@@ -83,46 +205,30 @@ async def safe_edit(msg, text, reply_markup=None):
 '''
 
 if "async def safe_edit(" not in text:
-    owner_pattern = re.compile(r'^(OWNER_IDS\s*=\s*\[[^\n]*\].*)$', re.M)
+    owner_line = re.search(r"^OWNER_IDS\s*=\s*\[[^\n]*\].*$", text, flags=re.M)
 
-    if owner_pattern.search(text):
-        text = owner_pattern.sub(r'\1' + helper_code, text, count=1)
+    if owner_line:
+        insert_pos = owner_line.end()
+        text = text[:insert_pos] + helper_code + text[insert_pos:]
         print("✅ safe_edit helper added after OWNER_IDS.")
     else:
-        # Fallback: add before /start handler
-        start_marker = '@bot.on_message(filters.command("start"))'
-        if start_marker in text:
-            text = text.replace(start_marker, helper_code + "\n" + start_marker, 1)
+        marker = '@bot.on_message(filters.command("start"))'
+        pos = text.find(marker)
+        if pos != -1:
+            text = text[:pos] + helper_code + "\n" + text[pos:]
             print("✅ safe_edit helper added before /start.")
         else:
-            print("⚠️ Could not find OWNER_IDS or /start marker. safe_edit not inserted.")
+            text = helper_code + "\n" + text
+            print("✅ safe_edit helper added at top fallback.")
 else:
     print("ℹ️ safe_edit already exists.")
 
 
-# ---------------------------------------------------------
-# 3. Fix missing global file_queue inside load_initial_data()
-# ---------------------------------------------------------
+# =========================================================
+# 5. Force replace /start command
+# =========================================================
 
-text = re.sub(
-    r'global\s+total_running_time\s*,\s*max_running_time(?!\s*,\s*file_queue)',
-    'global total_running_time, max_running_time, file_queue',
-    text
-)
-
-
-# ---------------------------------------------------------
-# 4. Replace /start command safely
-# ---------------------------------------------------------
-
-start_pattern = re.compile(
-    r'@bot\.on_message\(filters\.command\(["\']start["\']\)\)\s*'
-    r'async\s+def\s+start\(.*?\):.*?'
-    r'(?=\n\s*@bot\.on_message\(filters\.command\(["\']stop["\']\)\))',
-    re.S
-)
-
-new_start = r'''@bot.on_message(filters.command("start"))
+clean_start = r'''@bot.on_message(filters.command("start"))
 async def start(client: Client, msg: Message):
     user_mention = msg.from_user.mention if msg.from_user else "User"
 
@@ -184,53 +290,105 @@ async def start(client: Client, msg: Message):
             "Want to get started? Press /id\n\n"
             "💬 Contact **[𝚉𝙴𝙽𝙸𝚃𝙷 🏅](https://t.me/ZenithOfficialhelp)** "
             "to get the subscription 🎫 and unlock the full bot."
-        )'''
+        )
+'''
 
-text, replaced = start_pattern.subn(new_start, text)
 
-if replaced == 0:
-    print("⚠️ Could not auto-replace /start function. Your file may be formatted differently.")
+start_decorator_patterns = [
+    '@bot.on_message(filters.command("start"))',
+    "@bot.on_message(filters.command('start'))",
+]
+
+stop_decorator_patterns = [
+    '@bot.on_message(filters.command("stop"))',
+    "@bot.on_message(filters.command('stop'))",
+]
+
+start_pos = -1
+for p in start_decorator_patterns:
+    start_pos = text.find(p)
+    if start_pos != -1:
+        break
+
+stop_pos = -1
+for p in stop_decorator_patterns:
+    stop_pos = text.find(p)
+    if stop_pos != -1:
+        break
+
+if start_pos != -1 and stop_pos != -1 and stop_pos > start_pos:
+    text = text[:start_pos] + clean_start + "\n\n" + text[stop_pos:]
+    print("✅ /start function force replaced.")
 else:
-    print("✅ /start function patched.")
+    print("⚠️ Could not find normal /start to /stop block.")
+    print("⚠️ Trying regex fallback...")
+
+    start_regex = re.compile(
+        r'@bot\.on_message\(filters\.command\(["\']start["\']\)\)\s*'
+        r'async\s+def\s+start\(.*?\):.*?'
+        r'(?=\n\s*@bot\.on_message)',
+        re.S
+    )
+
+    text, replaced = start_regex.subn(clean_start + "\n\n", text, count=1)
+
+    if replaced:
+        print("✅ /start function replaced by regex fallback.")
+    else:
+        # Add clean start before first stop handler if possible
+        if stop_pos != -1:
+            text = text[:stop_pos] + clean_start + "\n\n" + text[stop_pos:]
+            print("✅ Clean /start inserted before /stop.")
+        else:
+            print("❌ Could not locate place for /start.")
+            print("❌ Please send your Modules/main.py file if this still fails.")
 
 
-# ---------------------------------------------------------
-# 5. Replace blocking sleep calls
-# ---------------------------------------------------------
+# =========================================================
+# 6. Fix global file_queue inside load_initial_data
+# =========================================================
+
+text = re.sub(
+    r"global\s+total_running_time\s*,\s*max_running_time(?!\s*,\s*file_queue)",
+    "global total_running_time, max_running_time, file_queue",
+    text
+)
+
+
+# =========================================================
+# 7. Fix async sleeps and FloodWait
+# =========================================================
 
 text = text.replace("time.sleep(e.x)", "await asyncio.sleep(e.value)")
 text = text.replace("time.sleep(e.value)", "await asyncio.sleep(e.value)")
+text = text.replace("time.sleep(10)", "await asyncio.sleep(10)")
+text = text.replace("time.sleep(5)", "await asyncio.sleep(5)")
 text = text.replace("time.sleep(3)", "await asyncio.sleep(3)")
 text = text.replace("time.sleep(2)", "await asyncio.sleep(2)")
 text = text.replace("time.sleep(1)", "await asyncio.sleep(1)")
-
-
-# ---------------------------------------------------------
-# 6. Fix reply_text exception object
-# ---------------------------------------------------------
 
 text = text.replace("await m.reply_text(e)", "await m.reply_text(str(e))")
 text = text.replace("await message.reply_text(e)", "await message.reply_text(str(e))")
 
 
-# ---------------------------------------------------------
-# 7. Remove accidental Git conflict markers if present
-# ---------------------------------------------------------
+# =========================================================
+# 8. Final check
+# =========================================================
 
-if "<<<<<<<" in text or ">>>>>>>" in text or "=======" in text:
-    print("⚠️ Git conflict markers found in Modules/main.py.")
-    print("⚠️ Please manually remove lines containing <<<<<<<, =======, >>>>>>> if bot fails.")
-    print("⚠️ This patcher does not auto-resolve full Git conflicts to avoid deleting your code.")
+if "<<<<<<<" in text or "=======" in text or ">>>>>>>" in text:
+    print("❌ Some conflict markers still remain.")
+    print("❌ Open Modules/main.py and search for: <<<<<<<")
+    print("❌ Delete the conflict block manually.")
+else:
+    print("✅ No Git conflict markers remain.")
 
-
-# ---------------------------------------------------------
-# 8. Write patched file
-# ---------------------------------------------------------
 
 TARGET.write_text(text, encoding="utf-8")
 
-print("✅ Patch complete: Modules/main.py")
-print("✅ Now run:")
-print("   python Modules/main.py")
+print("✅ Strong repair complete: Modules/main.py")
 print("")
-print("✅ Or redeploy Railway/Render.")
+print("Now test syntax with:")
+print("python -m py_compile Modules/main.py")
+print("")
+print("Then run bot:")
+print("python Modules/main.py")
